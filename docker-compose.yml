@@ -1,0 +1,96 @@
+version: '3.3'
+services:
+  mongodbservice:
+    image: mongo #镜像
+    container_name: mongodbservice #容器名
+    ports: #映射端口到宿主机，方便远程连接和可视化工具连接查看
+      - 27018:27017
+#   deploy: #这个配置到好像会报警告，说会忽视，不碍事，也可以不加
+#     restart_policy:
+#      condition: on-failure #none on-failure any
+#      delay: 5s
+#      max_attempts: 3
+#      window: 60s  #deploy配置到这里结束
+    volumes: #文件映射
+       - /myHome/mongo/mongod.conf.orig:/et/c/mongod.conf.orig #自定义mongodb配置文件
+       - /myHome/mongo/db:/data/db #映射数据库文件到宿主机，win10下开启会报错，但在linux中一般要开启，不把数据保存在容器中
+#   environment:  #mongodb连接的用户名和密码，加上后代码中可能也得加
+#      MONGO_INITDB_ROOT_USERNAME: root
+#      MONGO_INITDB_ROOT_PASSWORD: 123456    
+#   command: mongod --dbpath /data/db --logpath /data/log/dblog.log --auth   #command表示容器启动后要执行的命令
+    networks: #加入网络组
+      webapp-network: #指定加入名字为webapp-network的网络环境
+        ipv4_address: 172.23.0.6 #给容器分配静态ip
+        aliases: #给该ipv4配置别名
+         - mongodbservice
+
+  redisService:
+    image: redis #镜像
+    container_name: redisService #容器名
+    ports:  #映射端口到宿主机，方便远程连接和可视化工具连接查看
+      - 6380:6379    
+#   deploy: #用docker-compose -f可选 --compatibility up 运行
+#     restart_policy:
+#       condition: on-failure #none on-failure any
+#       delay: 5s
+#       max_attempts: 3
+#       window: 30s
+    volumes:
+      - /myHome/redis/data:/data
+      - /myHome/redis/redis.conf:/et/c/redis/redis.conf
+#   command: redis-server /et/c/redis/redis.conf #通过我自定义的配置文件启动redis
+    networks:
+      webapp-network:
+        ipv4_address: 172.23.0.2
+        aliases:
+         - redisService
+
+  nginxService:
+    image: nginx
+    container_name: nginxService
+    deploy:
+      restart_policy:
+        condition: on-failure #none on-failure any
+        delay: 3s
+        max_attempts: 3
+        window: 30s
+    ports:
+      - 80:80
+      - 443:443
+    volumes:
+      - /myHome/nginx/conf/nginx.conf:/et/c/nginx/nginx.conf
+      - /myHome/nginx/https:/et/c/nginx/https
+    depends_on: #依赖nodeService服务的启动，控制启动先后顺序
+      - nodeService
+#   extra_hosts: #将ip写进host中方便项目代码访问
+#     - "myappService:宿主机的ipv4地址" #这里应该是宿主机ipv4，win10可以在powershell或cmd中通过ipconfig命令查看
+    networks:
+       webapp-network:
+         ipv4_address: 172.23.0.3
+
+  nodeService:
+    image: node
+    container_name: nodeService
+    depends_on:
+      - mongodbservice
+      - redisService
+    ports:
+      - 3000:3000  
+    working_dir: /usr/local/app #指定工作目录
+    volumes:
+      - /myHome/nodejs/app:/usr/local/app
+#   command: node server/myapp.js #启动node服务，在linux上可用pm2启动
+    extra_hosts: #给/et/c/hosts加dns映射，这个配置比较重要
+      - "redisService:172.23.0.2"
+      - "mongodbservice:172.23.0.6"
+    networks:
+       webapp-network:
+         ipv4_address: 172.23.0.4
+
+networks:
+  webapp-network: #使用或新建network
+    driver: bridge #单机情况为bridge，多机器为overlay
+    ipam:
+      driver: default
+      config:
+        - subnet: "172.23.0.0/16" #给network指定基本ip,同时还会有一个Gateway占用172.23.0.1这个ip
